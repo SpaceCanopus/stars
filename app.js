@@ -114,7 +114,7 @@ function init() {
                 // Scale the size of the star based on its luminosity
                 const starSize = scaleStarSize(star.luminosity);
                 
-                let geometry = new THREE.SphereGeometry(starSize, 8, 8); // Star size based on luminosity
+                let geometry = new THREE.SphereGeometry(starSize, 16, 16); // Star size based on luminosity
                 let material = new THREE.MeshBasicMaterial({ color: getStarColor(star.estimated_temperature) });
                 let starMesh = new THREE.Mesh(geometry, material);
                 starMesh.position.set(x, y, z);
