@@ -3,6 +3,7 @@ function getStarColor(temperature) {
     const minTemperature = 2000;   // Coolest stars
     const maxTemperature = 40000;  // Hottest stars
 
+    // Clamp temperature between the defined min and max
     temperature = Math.max(minTemperature, Math.min(maxTemperature, temperature));
 
     const colorMap = [
@@ -28,13 +29,19 @@ function getStarColor(temperature) {
         }
     }
 
-    const t = (temperature - lowerColor.temp) / (upperColor.temp - lowerColor.temp);
+    // If no valid color range is found, return white as a fallback
+    if (!lowerColor || !upperColor) {
+        return { r: 255, g: 255, b: 255 }; // Default to white
+    }
 
+    // Linear interpolation between the two colors
+    const t = (temperature - lowerColor.temp) / (upperColor.temp - lowerColor.temp);
     const r = Math.round(lowerColor.color.r + t * (upperColor.color.r - lowerColor.color.r));
     const g = Math.round(lowerColor.color.g + t * (upperColor.color.g - lowerColor.color.g));
     const b = Math.round(lowerColor.color.b + t * (upperColor.color.b - lowerColor.color.b));
 
-    return (r << 16) | (g << 8) | b;
+    // Return the interpolated RGB object
+    return { r, g, b };
 }
 
 // Function to scale star size based on luminosity
@@ -61,6 +68,43 @@ function convertRaDecToXYZ(ra, dec, distance) {
     const z = distance * Math.cos(theta);
 
     return { x, y, z };
+}
+
+function generateGlowTexture(starColor) {
+    // Create a canvas element
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    
+    // Get the 2D drawing context
+    const ctx = canvas.getContext('2d');
+    
+    // Create radial gradient for the glow effect
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    
+    // Define the glow colors, using the star's color
+    gradient.addColorStop(0, `rgba(${starColor.r}, ${starColor.g}, ${starColor.b}, 1)`);   // Bright center (opaque)
+    gradient.addColorStop(0.2, `rgba(${starColor.r}, ${starColor.g}, ${starColor.b}, 0.6)`); // Outer glow (semi-transparent)
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); // Fully transparent at the edge
+    
+    // Fill the canvas with the gradient
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Create a texture from the canvas
+    const texture = new THREE.CanvasTexture(canvas);
+    
+    return texture;
+}
+
+function convert24BitToRgba(color24bit, alpha = 1) {
+    // Extract the red, green, and blue components from the 24-bit color
+    const r = (color24bit >> 16) & 255;  // Red
+    const g = (color24bit >> 8) & 255;   // Green
+    const b = color24bit & 255;          // Blue
+
+    // Return an rgba() string
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function init() {
@@ -92,7 +136,7 @@ function init() {
     const sunTemperature = 5778;  // The Sun's temperature in Kelvin
     const sunColor = getStarColor(sunTemperature);  // Get the Sun's color based on its temperature
     let sunGeometry = new THREE.SphereGeometry(0.017, 16, 16); // Larger sphere for the Sun
-    let sunMaterial = new THREE.MeshBasicMaterial({ color: sunColor });
+    let sunMaterial = new THREE.MeshBasicMaterial({ color: `rgb(${sunColor.r}, ${sunColor.g}, ${sunColor.b})` });
     let sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
     sunMesh.position.set(0, 0, 0);  // The Sun is at the origin
     sunMesh.userData = { name: 'Sun', distance: 0 };  // Set Sun's name and distance
@@ -108,20 +152,48 @@ function init() {
         })
         .then(data => {
             console.log("Stars data loaded successfully.");
+            const textureLoader = new THREE.TextureLoader();
+            const starTexture = textureLoader.load('assets/star_texture.jpg');
+
             data.forEach(star => {
                 const { x, y, z } = convertRaDecToXYZ(star.ra, star.dec, star.distance_pc);
-                
+            
                 // Scale the size of the star based on its luminosity
                 const starSize = scaleStarSize(star.luminosity);
-                
-                let geometry = new THREE.SphereGeometry(starSize, 16, 16); // Star size based on luminosity
-                let material = new THREE.MeshBasicMaterial({ color: getStarColor(star.estimated_temperature) });
+                const starColor = getStarColor(star.estimated_temperature); // Get RGB values
+            
+                // Generate the glow texture based on the star's color
+                const glowTexture = generateGlowTexture(starColor); // Star color as { r, g, b }
+            
+                const spriteMaterial = new THREE.SpriteMaterial({
+                    map: glowTexture,
+                    transparent: true,
+                    opacity: 1 // Adjust opacity for the glow
+                });
+            
+                let geometry = new THREE.SphereGeometry(starSize, 32, 32); // Star size based on luminosity
+            
+                let material = new THREE.MeshStandardMaterial({
+                    map: starTexture, // Apply the texture
+                    color: `rgb(${starColor.r}, ${starColor.g}, ${starColor.b})`, // Star color in RGB format
+                    emissive: `rgb(${starColor.r}, ${starColor.g}, ${starColor.b})`, // Emit light from the material
+                    emissiveIntensity: 0.2 // Adjust brightness of the emissive effect
+                });
+            
                 let starMesh = new THREE.Mesh(geometry, material);
                 starMesh.position.set(x, y, z);
                 starMesh.userData = { name: star.name, distance: star.distance_pc };
                 stars.push(starMesh); // Add star to array for raycasting
                 scene.add(starMesh);
+            
+                // Add glow sprite
+                const glowSprite = new THREE.Sprite(spriteMaterial);
+                glowSprite.scale.set(starSize * 6, starSize * 6, 1); // Adjust size relative to the star
+                glowSprite.position.set(x, y, z); // Position the glow sprite at the same place as the star
+            
+                scene.add(glowSprite);
             });
+            
         })
         .catch(error => console.error("Error loading stars.json:", error));
 
@@ -130,6 +202,7 @@ function init() {
 
     animate();
 }
+
 
 // Double-click event handler
 function onMouseDoubleClick(event) {
